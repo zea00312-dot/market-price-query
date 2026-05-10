@@ -1,0 +1,8 @@
+market-price-query
+market-price-query-*
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+*.iml
