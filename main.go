@@ -12,22 +12,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const moaAPIBase = "https://data.moa.gov.tw/api.aspx"
+const moaAPIBase = "https://data.moa.gov.tw"
 
 type PriceRecord struct {
-	ProductName string `json:"product_name"`
-	MarketName  string `json:"market_name"`
-	TransDate   string `json:"trans_date"`
-	AvgPrice    string `json:"avg_price"`
-	LowPrice    string `json:"low_price"`
-	HighPrice   string `json:"high_price"`
-	Volume      string `json:"volume"`
-}
-
-type APIResponse struct {
-	Success bool           `json:"success"`
-	Message string         `json:"message"`
-	Result  []PriceRecord  `json:"result"`
+	CropCode      string `json:"CropCode"`
+	CropName      string `json:"CropName"`
+	MarketName    string `json:"MarketName"`
+	TransDate     string `json:"TransDate"`
+	AvgPrice      string `json:"Avg_Price"`
+	UpperPrice    string `json:"Upper_Price"`
+	LowerPrice    string `json:"Lower_Price"`
+	MiddlePrice   string `json:"Middle_Price"`
+	TransQuantity string `json:"Trans_Quantity"`
 }
 
 var (
@@ -37,25 +33,31 @@ var (
 	endDate   string
 )
 
+func dateToROC(t time.Time) string {
+	rocYear := t.Year() - 1911
+	return fmt.Sprintf("%03d.%02d.%02d", rocYear, t.Month(), t.Day())
+}
+
 func queryMOAAPI(product string) ([]PriceRecord, error) {
 	params := url.Values{}
-	params.Set("$top", "1000")
-	params.Set("$format", "json")
-	params.Set("$filter", fmt.Sprintf("ProductName eq '%s'", product))
+	params.Set("CropName", product)
+	params.Set("MarketName", region)
 
-	if region != "" && region != "新竹" {
-		params.Set("$filter", fmt.Sprintf("ProductName eq '%s' and MarketName eq '%s'", product, region))
+	if startDate == "" && endDate == "" && days > 0 {
+		end := time.Now()
+		start := end.AddDate(0, 0, -days)
+		startDate = dateToROC(start)
+		endDate = dateToROC(end)
 	}
 
 	if startDate != "" {
-		params.Set("$filter", fmt.Sprintf("%s and TransDate ge '%s'", params.Get("$filter"), startDate))
+		params.Set("Start_time", startDate)
 	}
-
 	if endDate != "" {
-		params.Set("$filter", fmt.Sprintf("%s and TransDate le '%s'", params.Get("$filter"), endDate))
+		params.Set("End_time", endDate)
 	}
 
-	query := fmt.Sprintf("%s?%s", moaAPIBase, params.Encode())
+	query := fmt.Sprintf("%s/AgriProductsTransType/?%s", moaAPIBase, params.Encode())
 
 	resp, err := http.Get(query)
 	if err != nil {
@@ -118,10 +120,10 @@ var priceCmd = &cobra.Command{
 		}
 
 		fmt.Printf("品項: %s | 地區: %s | 筆數: %d\n", product, region, len(records))
-		fmt.Println("日期          | 平均價  | 最低價  | 最高價  | 交易量")
-		fmt.Println("---------- | ------- | ------- | ------- | -------")
+		fmt.Println("日期       | 平均價 | 中價  | 高價  | 低價  | 交易量(kg)")
+		fmt.Println("---------|--------|-------|-------|-------|----------")
 		for _, r := range records {
-			fmt.Printf("%s | %7s | %7s | %7s | %7s\n", r.TransDate, r.AvgPrice, r.LowPrice, r.HighPrice, r.Volume)
+			fmt.Printf("%s | %6s | %5s | %5s | %5s | %9s\n", r.TransDate, r.AvgPrice, r.MiddlePrice, r.UpperPrice, r.LowerPrice, r.TransQuantity)
 		}
 
 		return nil
@@ -132,13 +134,15 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "列出可查詢的品項",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		params := url.Values{}
-		params.Set("$top", "1000")
-		params.Set("$format", "json")
-		params.Set("$select", "ProductName")
-		params.Set("$skip", "0")
+		end := time.Now()
+		start := end.AddDate(0, 0, -1)
 
-		query := fmt.Sprintf("%s?%s", moaAPIBase, params.Encode())
+		params := url.Values{}
+		params.Set("Start_time", dateToROC(start))
+		params.Set("End_time", dateToROC(end))
+		params.Set("MarketName", region)
+
+		query := fmt.Sprintf("%s/AgriProductsTransType/?%s", moaAPIBase, params.Encode())
 
 		resp, err := http.Get(query)
 		if err != nil {
@@ -153,7 +157,7 @@ var listCmd = &cobra.Command{
 			os.Exit(2)
 		}
 
-		var records []map[string]interface{}
+		var records []PriceRecord
 		if err := json.Unmarshal(body, &records); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(2)
@@ -163,9 +167,9 @@ var listCmd = &cobra.Command{
 		if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
 			products := []string{}
 			for _, r := range records {
-				if name, ok := r["ProductName"].(string); ok && !seen[name] {
-					products = append(products, name)
-					seen[name] = true
+				if !seen[r.CropName] {
+					products = append(products, r.CropName)
+					seen[r.CropName] = true
 				}
 			}
 			json.NewEncoder(os.Stdout).Encode(map[string]any{
@@ -174,12 +178,12 @@ var listCmd = &cobra.Command{
 				"data":  products,
 			})
 		} else {
-			fmt.Println("可查詢品項:")
+			fmt.Println("可查詢品項 (" + region + "):")
 			count := 0
 			for _, r := range records {
-				if name, ok := r["ProductName"].(string); ok && !seen[name] {
-					fmt.Printf("  - %s\n", name)
-					seen[name] = true
+				if !seen[r.CropName] {
+					fmt.Printf("  - %s\n", r.CropName)
+					seen[r.CropName] = true
 					count++
 				}
 			}
