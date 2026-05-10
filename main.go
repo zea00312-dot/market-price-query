@@ -67,9 +67,6 @@ func queryMOAAPI(product string) ([]PriceRecord, error) {
 	if product != "" {
 		params.Set("CropName", product)
 	}
-	if region != "" {
-		params.Set("MarketName", region)
-	}
 
 	query := fmt.Sprintf("%s/AgriProductsTransType/?%s", moaAPIBase, params.Encode())
 
