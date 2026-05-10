@@ -12,18 +12,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const moaAPIBase = "https://data.moa.gov.tw"
+const moaAPIBase = "https://data.moa.gov.tw/api/v1"
 
 type PriceRecord struct {
-	CropCode      string `json:"CropCode"`
-	CropName      string `json:"CropName"`
-	MarketName    string `json:"MarketName"`
-	TransDate     string `json:"TransDate"`
-	AvgPrice      string `json:"Avg_Price"`
-	UpperPrice    string `json:"Upper_Price"`
-	LowerPrice    string `json:"Lower_Price"`
-	MiddlePrice   string `json:"Middle_Price"`
-	TransQuantity string `json:"Trans_Quantity"`
+	CropCode      string  `json:"CropCode"`
+	CropName      string  `json:"CropName"`
+	MarketName    string  `json:"MarketName"`
+	TransDate     string  `json:"TransDate"`
+	AvgPrice      float64 `json:"Avg_Price"`
+	UpperPrice    float64 `json:"Upper_Price"`
+	LowerPrice    float64 `json:"Lower_Price"`
+	MiddlePrice   float64 `json:"Middle_Price"`
+	TransQuantity float64 `json:"Trans_Quantity"`
+}
+
+type APIResponse struct {
+	RS   string        `json:"RS"`
+	Data []PriceRecord `json:"Data"`
 }
 
 var (
@@ -40,8 +45,6 @@ func dateToROC(t time.Time) string {
 
 func queryMOAAPI(product string) ([]PriceRecord, error) {
 	params := url.Values{}
-	params.Set("CropName", product)
-	params.Set("MarketName", region)
 
 	if startDate == "" && endDate == "" && days > 0 {
 		end := time.Now()
@@ -52,14 +55,31 @@ func queryMOAAPI(product string) ([]PriceRecord, error) {
 
 	if startDate != "" {
 		params.Set("Start_time", startDate)
+	} else {
+		params.Set("Start_time", dateToROC(time.Now().AddDate(0, 0, -7)))
 	}
 	if endDate != "" {
 		params.Set("End_time", endDate)
+	} else {
+		params.Set("End_time", dateToROC(time.Now()))
+	}
+
+	if product != "" {
+		params.Set("CropName", product)
+	}
+	if region != "" {
+		params.Set("MarketName", region)
 	}
 
 	query := fmt.Sprintf("%s/AgriProductsTransType/?%s", moaAPIBase, params.Encode())
 
-	resp, err := http.Get(query)
+	req, err := http.NewRequest("GET", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -70,12 +90,16 @@ func queryMOAAPI(product string) ([]PriceRecord, error) {
 		return nil, err
 	}
 
-	var result []PriceRecord
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
+	var apiResp APIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("json unmarshal error: %v", err)
 	}
 
-	return result, nil
+	if apiResp.RS != "OK" {
+		return nil, fmt.Errorf("API error: %s", apiResp.RS)
+	}
+
+	return apiResp.Data, nil
 }
 
 var rootCmd = &cobra.Command{
@@ -120,10 +144,10 @@ var priceCmd = &cobra.Command{
 		}
 
 		fmt.Printf("品項: %s | 地區: %s | 筆數: %d\n", product, region, len(records))
-		fmt.Println("日期       | 平均價 | 中價  | 高價  | 低價  | 交易量(kg)")
-		fmt.Println("---------|--------|-------|-------|-------|----------")
+		fmt.Println("日期       | 平均價 | 中價   | 高價   | 低價   | 交易量(kg)")
+		fmt.Println("---------|--------|--------|--------|--------|----------")
 		for _, r := range records {
-			fmt.Printf("%s | %6s | %5s | %5s | %5s | %9s\n", r.TransDate, r.AvgPrice, r.MiddlePrice, r.UpperPrice, r.LowerPrice, r.TransQuantity)
+			fmt.Printf("%s | %6.1f | %6.1f | %6.1f | %6.1f | %8.0f\n", r.TransDate, r.AvgPrice, r.MiddlePrice, r.UpperPrice, r.LowerPrice, r.TransQuantity)
 		}
 
 		return nil
@@ -134,31 +158,8 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "列出可查詢的品項",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		end := time.Now()
-		start := end.AddDate(0, 0, -1)
-
-		params := url.Values{}
-		params.Set("Start_time", dateToROC(start))
-		params.Set("End_time", dateToROC(end))
-		params.Set("MarketName", region)
-
-		query := fmt.Sprintf("%s/AgriProductsTransType/?%s", moaAPIBase, params.Encode())
-
-		resp, err := http.Get(query)
+		records, err := queryMOAAPI("")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(2)
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(2)
-		}
-
-		var records []PriceRecord
-		if err := json.Unmarshal(body, &records); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(2)
 		}
