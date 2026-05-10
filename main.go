@@ -199,6 +199,7 @@ func init() {
 	priceCmd.Flags().IntVarP(&days, "days", "d", 7, "查詢天數（預設：7 天）")
 	priceCmd.Flags().BoolP("json", "", false, "JSON 輸出")
 
+	listCmd.Flags().StringVarP(&region, "region", "r", "新竹", "查詢地區（預設：新竹）")
 	listCmd.Flags().BoolP("json", "", false, "JSON 輸出")
 
 	rootCmd.AddCommand(priceCmd)
